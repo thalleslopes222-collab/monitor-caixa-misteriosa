@@ -2,6 +2,7 @@ name: Monitor Caixa Misteriosa
 
 on:
   schedule:
+    # Continua a rodar a cada 5 minutos no relógio do GitHub
     - cron: '*/5 * * * *'
   workflow_dispatch:
 
@@ -20,6 +21,63 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Run script
-        run: python monitor.py
+      - name: Run script with 30s interval
+        run: |
+          python -c '
+          import requests
+          import time
+
+          TELEGRAM_TOKEN = "9108437032:AAFnSgU1zKlb8cURcwMkk5blk4M-L5rXm5A"
+          TELEGRAM_CHAT_ID = "5652576872"
+          ENDPOINT = "https://www.webcontinental.com.br/_v/box-showcase"
+          LANDING = "https://www.webcontinental.com.br/caixa-misteriosa"
+          ACTIVE_WORDS = ["ativo", "ativa", "liberado", "liberada", "disponivel", "disponível", "aberto", "aberta"]
+          
+          seen_keys = set()
+
+          def send_telegram_alert(message, url):
+              api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+              payload = {
+                  "chat_id": TELEGRAM_CHAT_ID,
+                  "text": message,
+                  "parse_mode": "HTML",
+                  "reply_markup": {
+                      "inline_keyboard": [[{"text": "🛒 ABRIR VITRINE AGORA", "url": url}]]
+                  }
+              }
+              try:
+                  requests.post(api_url, json=payload, timeout=5)
+              except Exception as e:
+                  print(f"Erro Telegram: {e}")
+
+          def check_boxes():
+              global seen_keys
+              headers = {"User-Agent": "Mozilla/5.0"}
+              try:
+                  response = requests.get(ENDPOINT, headers=headers, timeout=8)
+                  if response.status_code != 200:
+                      return
+                  data = response.json()
+                  items = data.get("itens", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                  for i, item in enumerate(items):
+                      status = str(item.get("status", "")).strip().lower()
+                      ordem = item.get("ordem", f"i{i}")
+                      sku = item.get("sku", "")
+                      sku2 = item.get("sku2", "")
+                      hash_code = item.get("hash", "")
+                      key = f"{ordem}|{sku}|{sku2}|{status}"
+                      is_active = status in ACTIVE_WORDS or (hash_code and (sku or sku2))
+                      if is_active and key not in seen_keys:
+                          seen_keys.add(key)
+                          msg = f"🚨 <b>CAIXA MISTERIOSA LIBERADA!</b> 🚨\n\nStatus: <i>{status.upper()}</i>"
+                          send_telegram_alert(msg, LANDING)
+              except Exception as e:
+                  pass
+
+          # Roda num ciclo interno de 4 minutos e meio (consultando a cada 30 segundos)
+          start_time = time.time()
+          while time.time() - start_time < 270:
+              check_boxes()
+              time.sleep(30)
+          '
         timeout-minutes: 5
